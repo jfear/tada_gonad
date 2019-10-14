@@ -1,0 +1,15 @@
+bam: "../output/alignment-wf/{sample}/{sample}.cutadapt.unique.markdups.bam"
+gatc:
+  motif: "../output/carl-wf/gatc.motif"
+  fragments: "../output/carl-wf/gatc_fragments.bed"
+  gene: "../output/carl-wf/gatc2gene.tsv"
+extended_reads: "../output/carl-wf/{sample}/{sample}.{ext}.bed"
+counts: "../output/carl-wf/{sample}/{sample}.{ext}.counts.bed"
+gatc_counts: "../output/carl-wf/gatc_level.{ext}.counts.tsv"
+gene_counts: "../output/carl-wf/gene_level.{ext}.counts.tsv"
+deg:
+  gatc: "../output/carl-wf/carl_gatc_deg_{tissue}_{driver}.{ext}.tsv"
+  gene: "../output/carl-wf/carl_gene_deg_{tissue}_{driver}.{ext}.tsv"
+results:
+  gatc: "../output/carl-wf/carl_gatc_deg.xlsx"
+  gene: "../output/carl-wf/carl_gene_deg.xlsx"

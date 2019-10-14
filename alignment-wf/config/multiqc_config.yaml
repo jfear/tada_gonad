@@ -1,0 +1,21 @@
+extra_fn_clean_exts:
+  - '.cutadapt'
+  - ']'
+  - '.log'
+  - '.gz'
+  - '.fastq'
+
+sp:
+  fastq_screen:
+    fn: '*.screen.txt'
+
+module_order:
+    - cutadapt
+    - fastqc:
+        name: 'FastQC (trimmed)'
+        target: ''
+        path_filters:
+            - '*.cutadapt.fastq.gz_fastqc.zip'
+    - fastq_screen
+    - bowtie2
+    - picard

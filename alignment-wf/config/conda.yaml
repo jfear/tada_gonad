@@ -1,0 +1,15 @@
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+  - lcdb
+  - jfear
+dependencies:
+  - cutadapt
+  - fastqc
+  - fastq-screen
+  - bowtie2
+  - samtools
+  - multiqc
+  - picard
+  - deeptools

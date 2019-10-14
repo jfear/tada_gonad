@@ -1,0 +1,12 @@
+cutadapt: "../output/alignment-wf/{sample}/{sample}.cutadapt.fastq.gz"
+bam: '../output/alignment-wf/{sample}/{sample}.cutadapt.bam'
+fastqc: '../output/alignment-wf/{sample}/fastqc/{sample}.cutadapt.fastq.gz_fastqc.zip'
+fastq_screen: '../output/alignment-wf/{sample}/{sample}.cutadapt.screen.txt'
+unique: '../output/alignment-wf/{sample}/{sample}.cutadapt.unique.bam'
+markduplicates:
+   bam: '../output/alignment-wf/{sample}/{sample}.cutadapt.unique.markdups.bam'
+   metrics: '../output/alignment-wf/{sample}/{sample}.cutadapt.unique.markdups.bam.metrics'
+multiqc: '../output/alignment-wf/multiqc.html'
+bigwig:
+   sense: '../output/alignment-wf/{sample}/{sample}.cutadapt.unique.markdups.bam.sense.bw'
+   antisense: '../output/alignment-wf/{sample}/{sample}.cutadapt.unique.markdups.bam.antisesne.bw'

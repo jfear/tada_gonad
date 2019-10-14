@@ -1,0 +1,15 @@
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+  - lcdb
+  - jfear
+dependencies:
+  - homer
+  - bedtools
+  - pybedtools
+  - r-base
+  - r-tidyverse
+  - bioconductor-deseq2
+  - bioconductor-apeglm
+  - bioconductor-biocparallel

@@ -1,0 +1,154 @@
+"""Carl and Russel Pipeline
+
+https://github.com/sarahhcarl/Flychip/wiki/Basic-DamID-analysis-pipeline
+"""
+from yaml import safe_load
+import re
+
+import pandas as pd
+from snakemake.io import expand
+
+
+sampletable = pd.read_csv("../config/sampletable.tsv", sep="\t")
+patterns = safe_load(open("config/patterns.yaml"))
+
+configfile: "../config/config.yaml"
+TAG = config['tag']
+TISSUES = sampletable.tissue.unique().tolist()
+DRIVERS = sampletable.driver.unique().tolist()
+EXT = "300"
+
+
+subworkflow alignment:
+    workdir: "../alignment-wf"
+    snakefile: "../alignment-wf/Snakefile"
+    configfile: "../config/config.yaml"
+
+
+rule all:
+    input: patterns['results']['gatc'], patterns['results']['gene']
+
+
+## ID GATC Fragments
+rule makeMotif:
+    output: patterns['gatc']['motif']
+    conda: "config/conda.yaml"
+    shell:"seq2profile.pl GATC 1 1-GATC > {output[0]}"
+
+
+rule GATCHomer:
+    input: 
+        motif = rules.makeMotif.output[0],
+        fasta = f"../lcdb-references/dmel/{TAG}/fasta/dmel_{TAG}.fasta"
+    output: temp("../output/carl-wf/homer.bed")
+    threads: 6
+    conda: "config/conda.yaml"
+    shell: """
+        scanMotifGenomeWide.pl {input.motif} \
+            {input.fasta} \
+            -bed \
+            -p {threads} \
+            > {output[0]}
+    """
+
+
+rule fix_GATCHomer:
+    """Clean up the Homer BED file"""
+    input: rules.GATCHomer.output[0]
+    output: patterns['gatc']['fragments']
+    run:
+        with open(str(input)) as fh, open(str(output[0]), "w") as fo:
+            cnt = 1
+            for row in fh.read().strip().split("\n"):
+                cols = row.split("\t")
+                cols[0] = cols[0].split()[0]
+                cols[3] = "GATC_{}:{}-{}".format(*cols[:3])
+                fo.write("\t".join(cols) + "\n")
+
+
+rule gatc_to_gene:
+    input: 
+        gatc = rules.fix_GATCHomer.output[0],
+        gtf = f"../lcdb-references/dmel/{TAG}/gtf/dmel_{TAG}.gtf"
+    output: patterns['gatc']['gene']
+    conda: "config/conda.yaml"
+    script: "scripts/gatc2gene.py"
+
+
+## Extend Reads
+rule convertAndSlop:
+    input: 
+        bam = alignment(patterns['bam']),
+        chromSizes = f"../lcdb-references/dmel/{TAG}/fasta/dmel_{TAG}.chromsizes"
+    output: patterns['extended_reads'].replace("ext", "ext,\d+")
+    params: 
+        fragLen = lambda wildcards: int(wildcards.ext) - 50
+    conda: "config/conda.yaml"
+    shell: """
+        bamToBed -i {input.bam} | sort -k1,1 | \
+        bedtools slop -l {params.fragLen} -r 0 -s -i - -g {input.chromSizes} > {output[0]}
+    """
+
+
+## Coverage Counts
+rule counts:
+    input: bed = rules.fix_GATCHomer.output[0],
+           slop = rules.convertAndSlop.output[0]
+    output: patterns['counts']
+    conda: "config/conda.yaml"
+    shell:"bedtools coverage -a {input.bed} -b {input.slop} > {output[0]}"
+
+
+rule gatcCounts:
+    input: lambda wildcards: expand(patterns['counts'], sample=sampletable.samplename, ext=wildcards.ext)
+    output: patterns['gatc_counts']
+    script: "scripts/gatc_counts_table.py"
+
+
+rule geneCounts:
+    input:
+        counts = rules.gatcCounts.output[0],
+        gatc2gene = rules.gatc_to_gene.output[0]
+    output: patterns['gene_counts']
+    run:
+        (
+            pd.read_csv(input.counts, sep="\t", index_col=0)
+            .join(pd.read_csv(input.gatc2gene, sep="\t", index_col=0))
+            .groupby("FBgn").sum().to_csv(output[0], sep='\t')
+        )
+
+
+## Differential expression
+rule gatcDEG:
+    input: 
+        sampletable = "../config/sampletable.tsv",
+        counts = rules.gatcCounts.output[0]
+    output: patterns['deg']['gatc']
+    threads: 4
+    conda: "config/conda.yaml"
+    script: "scripts/differential_expression_gatc.R"
+
+
+rule geneDEG:
+    input: 
+        sampletable = "../config/sampletable.tsv",
+        counts = rules.geneCounts.output[0]
+    output: patterns['deg']['gene']
+    threads: 4
+    conda: "config/conda.yaml"
+    script: "scripts/differential_expression_gene.R"
+
+
+rule combine_gatc_results:
+    input: 
+        files = expand(patterns['deg']['gatc'], tissue=TISSUES, driver=DRIVERS, ext=EXT),
+    output: patterns['results']['gatc']
+    script: "scripts/combine_result_tables.py"
+
+
+rule combine_gene_results:
+    input: 
+        files = expand(patterns['deg']['gene'], tissue=TISSUES, driver=DRIVERS, ext=EXT),
+        annot = f"../lcdb-references/dmel/{TAG}/fb_annotation/dmel_{TAG}.fb_annotation"
+    output: patterns['results']['gene']
+    script: "scripts/combine_result_tables.py"

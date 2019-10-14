@@ -1,0 +1,181 @@
+from yaml import safe_load
+from pathlib import Path
+
+from more_itertools import flatten
+from snakemake.io import expand
+import pandas as pd
+
+configfile: "../config/config.yaml"
+sampletable = pd.read_csv("../config/sampletable.tsv", sep="\t")
+patterns = safe_load(open("config/patterns.yaml"))
+
+TAG = config['tag']
+
+rule all:
+    input:
+        expand(patterns['fastqc'], sample=sampletable.samplename),
+        expand(patterns['fastq_screen'], sample=sampletable.samplename),
+        expand(patterns['bam'], sample=sampletable.samplename),
+        expand(patterns['markduplicates']['bam'], sample=sampletable.samplename),
+        expand(patterns['bigwig']['sense'], sample=sampletable.samplename),
+        expand(patterns['bigwig']['antisense'], sample=sampletable.samplename),
+        patterns['multiqc']
+
+
+def wrapper_for(tool):
+    return f"../lcdb-wf/wrappers/wrappers/{tool}/wrapper.py"
+
+
+def get_original(wildcards):
+    return Path(
+        "../data/fastq",
+        sampletable.query(f"samplename == '{wildcards.sample}'").orig_filenames.values[0]
+    ).as_posix()
+
+
+rule cutadapt:
+    input: get_original
+    output: patterns['cutadapt']
+    log: patterns['cutadapt'] + '.log'
+    conda: "config/conda.yaml"
+    threads: 4
+    shell: """
+        cutadapt \
+        -j {threads} \
+        -o {output[0]} \
+        -a illumina=AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
+        -a damid=GATCCTCGGCCGCGACCT \
+        -g ^GGTCGCGGCCGAGGATC \
+        -q 20 \
+        --minimum-length 25 \
+        {input} \
+        > {log} 2>&1
+    """
+
+
+rule fastqc:
+    input: rules.cutadapt.output[0]
+    output: 
+        html = patterns['fastqc'].replace("zip", "html"),
+        zip = patterns['fastqc']
+    conda: "config/conda.yaml"
+    script: wrapper_for("fastqc")
+
+
+rule bowtie2:
+    input:
+        fastq=rules.cutadapt.output[0],
+        index=f"../lcdb-references/dmel/{TAG}/bowtie2/dmel_{TAG}.1.bt2"
+    output: patterns['bam']
+    log: patterns['bam'] + '.log'
+    threads: 8
+    conda: "config/conda.yaml"
+    script: "scripts/bowtie2.py"
+
+
+rule remove_multimappers:
+    input: rules.bowtie2.output[0]
+    output: patterns['unique']
+    conda: "config/conda.yaml"
+    shell: 'samtools view -b -q 20 {input} > {output}'
+
+
+rule bam_index:
+    input: '{prefix}.bam'
+    output: '{prefix}.bam.bai'
+    conda: "config/conda.yaml"
+    shell: 'samtools index {input} {output}'
+
+
+rule fastq_screen:
+    input:
+        rRNA="../lcdb-references/dmel/rRNA/bowtie2/dmel_rRNA.1.bt2",
+        human="../lcdb-references/human/gencode-v28/bowtie2/human_gencode-v28.1.bt2",
+        mouse="../lcdb-references/mouse/gencode_m18/bowtie2/mouse_gencode_m18.1.bt2",
+        ecoli="../lcdb-references/ecoli/default/bowtie2/ecoli_default.1.bt2",
+        yeast="../lcdb-references/sacCer/sacCer3/bowtie2/sacCer_sacCer3.1.bt2",
+        wolbachia="../lcdb-references/wolbachia/default/bowtie2/wolbachia_default.1.bt2",
+        fastq=rules.cutadapt.output[0],
+    output: 
+        txt=patterns['fastq_screen']
+    log: patterns['fastq_screen'] + '.log'
+    params: subset=100000
+    threads: 4
+    conda: "config/conda.yaml"
+    script: 'scripts/fastq_screen.py'
+
+
+rule markduplicates:
+    input: patterns['unique']
+    output:
+        bam=patterns['markduplicates']['bam'],
+        metrics=patterns['markduplicates']['metrics']
+    log: patterns['markduplicates']['bam'] + '.log'
+    params: java_args='-Xmx12g'
+    conda: "config/conda.yaml"
+    shell:
+        'picard '
+        '{params.java_args} '
+        'MarkDuplicates '
+        'INPUT={input} '
+        'OUTPUT={output.bam} '
+        'REMOVE_DUPLICATES=true '
+        'METRICS_FILE={output.metrics} '
+        '> {log} 2>&1'
+
+
+rule multiqc:
+    input:
+        files=flatten((
+            expand(patterns['cutadapt'], sample=sampletable.samplename),
+            expand(patterns['fastqc'], sample=sampletable.samplename),
+            expand(patterns['bam'], sample=sampletable.samplename),
+            expand(patterns['fastq_screen'], sample=sampletable.samplename),
+            expand(patterns['markduplicates']['metrics'], sample=sampletable.samplename),
+        )),
+        config='config/multiqc_config.yaml'
+    output: patterns['multiqc']
+    log: patterns['multiqc'] + '.log'
+    conda: "config/conda.yaml"
+    script: "scripts/multiqc.py"
+
+
+rule bigwig_sense:
+    input:
+        bam=patterns['markduplicates']['bam'],
+        bai=patterns['markduplicates']['bam'] + '.bai',
+    output: patterns['bigwig']['sense']
+    log: patterns['bigwig']['sense'] + '.log'
+    conda: "config/conda.yaml"
+    shell:
+        'bamCoverage '
+        '--bam {input.bam} '
+        '-o {output} '
+        '-p {threads} '
+        '--filterRNAstrand forward '
+        '--minMappingQuality 20 '
+        '--ignoreDuplicates '
+        '--normalizeUsing CPM '
+        '--extendReads 300 '
+        '> {log} 2>&1'
+
+
+rule bigwig_antisense:
+    input:
+        bam=patterns['markduplicates']['bam'],
+        bai=patterns['markduplicates']['bam'] + '.bai',
+    output: patterns['bigwig']['antisense']
+    log: patterns['bigwig']['antisense'] + '.log'
+    conda: "config/conda.yaml"
+    shell:
+        'bamCoverage '
+        '--bam {input.bam} '
+        '-o {output} '
+        '-p {threads} '
+        '--filterRNAstrand reverse '
+        '--minMappingQuality 20 '
+        '--ignoreDuplicates '
+        '--normalizeUsing CPM '
+        '--extendReads 300 '
+        '> {log} 2>&1'
+
